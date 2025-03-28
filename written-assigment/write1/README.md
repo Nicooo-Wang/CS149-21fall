@@ -3,6 +3,7 @@
 # [Write Assignment 1](https://gfxcourses.stanford.edu/cs149/fall21content/static/pdfs/written_asst1.pdf)
 
 ## Problem 1: Superscalar and Hardware Multi-Threading
+### Instruction Dependency
 
  1. LD R1 <- [R0]
  2. MUL R2 <- R1, R1
@@ -85,5 +86,8 @@
     Instruction11 - satisfies -> Instruction10
 
 ```
+
+### steay-state utilization of the processor
+10 / 70 = 14.28%
 
 ## Problem 2: Picking the Right CPU for the Job
