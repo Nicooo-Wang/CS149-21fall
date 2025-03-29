@@ -69,21 +69,21 @@
 
     Instruction1 - satisfies -> Instruction2
     Instruction1 - satisfies -> Instruction3
-    Instruction4 - satisfies -> Instruction2
-    Instruction4 - satisfies -> Instruction3
-    Instruction5 - satisfies -> Instruction2
-    Instruction5 - satisfies -> Instruction3
-    Instruction6 - satisfies -> Instruction4
-    Instruction6 - satisfies -> Instruction5
-    Instruction7 - satisfies -> Instruction4
-    Instruction7 - satisfies -> Instruction5
-    Instruction8 - satisfies -> Instruction6
-    Instruction8 - satisfies -> Instruction7
-    Instruction9 - satisfies -> Instruction6
-    Instruction9 - satisfies -> Instruction7
-    Instruction10 - satisfies -> Instruction8
-    Instruction10 - satisfies -> Instruction9
-    Instruction11 - satisfies -> Instruction10
+    Instruction2 - satisfies -> Instruction4
+    Instruction3 - satisfies -> Instruction4
+    Instruction2 - satisfies -> Instruction5
+    Instruction3 - satisfies -> Instruction5
+    Instruction4 - satisfies -> Instruction6
+    Instruction5 - satisfies -> Instruction6
+    Instruction4 - satisfies -> Instruction7
+    Instruction5 - satisfies -> Instruction7
+    Instruction6 - satisfies -> Instruction8
+    Instruction7 - satisfies -> Instruction8
+    Instruction6 - satisfies -> Instruction9
+    Instruction7 - satisfies -> Instruction9
+    Instruction8 - satisfies -> Instruction10
+    Instruction9 - satisfies -> Instruction10
+    Instruction10 - satisfies -> Instruction11
 
 ```
 
@@ -94,23 +94,15 @@
 70 / 10 = 7 threads
 
 ### D. speedup of for-way superscalar proceessor
-```mermaid
-gantt
-    title CPU 乱序执行 Gantt 图
-    dateFormat  DDD
-    axisFormat  %j
-    section Thread 1
-    LOAD         :l1, 2000-01-01, 60d
-    EXEC         :after l1  , 10d
-    section Thread 2
-    LOAD         :l2, 2000-01-11, 60d
-    EXEC         :after l2  , 10d
-    section Thread 3
-    LOAD         :l3, 2000-01-21, 60d
-    EXEC         :after l3  , 10d
-    section Thread 4
-    LOAD         :l4, 2000-01-31, 60d
-    EXEC         :after l4  , 10d
-```
-（70 + 60 + 50 + 40 ）/ 70 = 3.1428571429
+70 / 66
+
+### E. minimum number of hardware threads needed
+考虑极限情况，两个thread分别在0, 1时序发射，在arithmetic calculation时会占满4个superscaler
+因此答案为2
+
+### F. think ur friend's suggestion
+在数据局部性好的场景下是合理的（16MB缓存可显著降低延迟，避免多线程开销）。
+但在数据访问随机或高并发场景下，单纯依赖缓存可能不够，仍需多线程辅助隐藏延迟。
+最佳方案是结合缓存优化和多线程，根据实际应用特点权衡设计。
+
 ## Problem 2: Picking the Right CPU for the Job
