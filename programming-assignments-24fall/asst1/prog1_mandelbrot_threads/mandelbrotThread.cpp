@@ -36,11 +36,18 @@ void workerThreadStart(WorkerArgs * const args) {
     // half of the image and thread 1 could compute the bottom half.
 
     double startTime = CycleTimer::currentSeconds();
-    unsigned int heightStart = args->threadId * (args->height / args->numThreads);
-    unsigned int heightEnd = (1 + args->threadId) * (args->height / args->numThreads);
-
+    int rowsPerThread = args->height / args->numThreads;
+    int startRow = args->threadId * rowsPerThread;
+    int totalRows = rowsPerThread;
+    if (args->threadId + 1 == args->numThreads) {
+        totalRows = args->height - startRow;
+    }
+    if (args->threadId == 7) {
+      printf("[mandelbrot thread %d]: width %d, startRow%d, totalRows%d\n",
+             args->threadId, args->width, startRow, totalRows);
+    }
     mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, args->width,
-                     args->height, heightStart, heightEnd, args->maxIterations,
+                     args->height, startRow, totalRows, args->maxIterations,
                      args->output);
     double endTime = CycleTimer::currentSeconds();
 
@@ -92,10 +99,10 @@ void mandelbrotThread(
     // Spawn the worker threads.  Note that only numThreads-1 std::threads
     // are created and the main application thread is used as a worker
     // as well.
-    for (int i=1; i<numThreads; i++) {
-        workers[i] = std::thread(workerThreadStart, &args[i]);
+    for (int i = 1; i < numThreads; i++) {
+      workers[i] = std::thread(workerThreadStart, &args[i]);
     }
-    
+
     workerThreadStart(&args[0]);
 
     // join worker threads
