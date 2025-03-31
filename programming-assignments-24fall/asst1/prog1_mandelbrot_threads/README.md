@@ -36,6 +36,8 @@ Wrote image file mandelbrot-thread.ppm
 
 4. Modify the mapping of work to threads to achieve to improve speedup to at about 7-8x on both views of the Mandelbrot set (if you're above 7x that's fine, don't sweat it). You may not use any synchronization between threads in your solution. We are expecting you to come up with a single work decomposition policy that will work well for all thread counts---hard coding a solution specific to each configuration is not allowed! (Hint: There is a very simple static assignment that will achieve this goal, and no communication/synchronization among threads is necessary.). In your writeup, describe your approach to parallelization and report the final 8-thread speedup obtained.  
 修改工作到线程的映射以实现速度提升至大约 7-8 倍，在曼德布罗特集的两种视图上（如果你超过 7 倍也没关系，不用太担心）。你的解决方案中不得使用线程间的任何同步。我们期望你提出一个适用于所有线程数的单一工作分解策略——不允许针对每个配置硬编码特定的解决方案！（提示：有一个非常简单的静态分配可以实现这个目标，并且不需要线程间的通信/同步。）在你的论文中，描述你的并行化方法，并报告最终获得的 8 线程速度提升。  
+answer: 只有四个cpu哈哈，3.65x加速
  
 5. Now run your improved code with 16 threads. Is performance noticably greater than when running with eight threads? Why or why not?  
 现在运行您改进的代码，使用 16 个线程。性能是否明显优于使用 8 个线程时？为什么或为什么不？  
+answer: 只有四个cpu哈哈，3.65x加速

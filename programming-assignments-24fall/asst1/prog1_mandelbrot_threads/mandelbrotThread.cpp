@@ -22,6 +22,21 @@ extern void mandelbrotSerial(
     int maxIterations,
     int output[]);
 
+//
+// MandelbrotSerialStep --
+//
+// Compute an image visualizing the mandelbrot set.  The resulting
+// array contains the number of iterations required before the complex
+// number corresponding to a pixel could be rejected from the set.
+//
+// * x0, y0, x1, y1 describe the complex coordinates mapping
+//   into the image viewport.
+// * width, height describe the size of the output image
+// * taskId describe the index of row tobe processed
+extern void mandelbrotSerialStep(float x0, float y0, float x1, float y1,
+                                 int width, int height, int taskId,
+                                 int numWorkers, int maxIterations,
+                                 int output[]);
 
 //
 // workerThreadStart --
@@ -36,19 +51,21 @@ void workerThreadStart(WorkerArgs * const args) {
     // half of the image and thread 1 could compute the bottom half.
 
     double startTime = CycleTimer::currentSeconds();
-    int rowsPerThread = args->height / args->numThreads;
-    int startRow = args->threadId * rowsPerThread;
-    int totalRows = rowsPerThread;
-    if (args->threadId + 1 == args->numThreads) {
-        totalRows = args->height - startRow;
-    }
-    if (args->threadId == 7) {
-      printf("[mandelbrot thread %d]: width %d, startRow%d, totalRows%d\n",
-             args->threadId, args->width, startRow, totalRows);
-    }
-    mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, args->width,
-                     args->height, startRow, totalRows, args->maxIterations,
-                     args->output);
+    // method 1
+    // int rowsPerThread = args->height / args->numThreads;
+    // int startRow = args->threadId * rowsPerThread;
+    // int totalRows = rowsPerThread;
+    // if (args->threadId + 1 == args->numThreads) {
+    //     totalRows = args->height - startRow;
+    // }
+    // mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, args->width,
+    //                  args->height, startRow, totalRows, args->maxIterations,
+    //                  args->output);
+    
+    // method 2
+    mandelbrotSerialStep(args->x0, args->y0, args->x1, args->y1, args->width,
+                         args->height, args->threadId, args->numThreads,
+                         args->maxIterations, args->output);
     double endTime = CycleTimer::currentSeconds();
 
     printf("[mandelbrot thread %d]:\t\t[%.3f] ms\n", args->threadId,
