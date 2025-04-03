@@ -241,15 +241,44 @@ void clampedExpSerial(float* values, int* exponents, float* output, int N) {
 }
 
 void clampedExpVector(float* values, int* exponents, float* output, int N) {
-
   //
   // CS149 STUDENTS TODO: Implement your vectorized version of
   // clampedExpSerial() here.
   //
   // Your solution should work for any value of
   // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
-  //
-  
+  __cs149_vec_int exponent;
+  __cs149_vec_float value;
+  __cs149_vec_float result;
+  auto vecIntZero = _cs149_vset_int(0);
+  auto vecIntOne = _cs149_vset_int(1);
+  auto vecF999 = _cs149_vset_float(9.999999f);
+  __cs149_mask maskNeedProc;
+
+  for (int i = 0; i < N; i += VECTOR_WIDTH) {
+    result = _cs149_vset_float(1.f);
+
+    int width = (N - i) > VECTOR_WIDTH ? VECTOR_WIDTH : (N - i);
+    maskNeedProc = _cs149_init_ones(width);
+    __cs149_mask maskAll = _cs149_init_ones(width);
+
+    // float x = values[i];
+    // int y = exponents[i];
+    _cs149_vload_int(exponent, exponents + i, maskNeedProc);
+    _cs149_vload_float(value, values + i, maskNeedProc);
+
+    while (_cs149_cntbits(maskNeedProc)) {
+      _cs149_vgt_int(maskNeedProc, exponent, vecIntZero, maskNeedProc);
+      _cs149_vmult_float(result, result, value, maskNeedProc);
+      _cs149_vsub_int(exponent, exponent, vecIntOne, maskNeedProc);
+    }
+
+    _cs149_vgt_float(maskNeedProc, result, vecF999, maskAll);
+    _cs149_vmove_float(result, vecF999, maskNeedProc);
+
+    // Write results back to memory
+    _cs149_vstore_float(output + i, result, maskAll);
+  }  //
 }
 
 // returns the sum of all elements in values
