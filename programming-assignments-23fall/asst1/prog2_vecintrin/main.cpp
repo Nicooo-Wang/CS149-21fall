@@ -241,15 +241,35 @@ void clampedExpSerial(float* values, int* exponents, float* output, int N) {
 }
 
 void clampedExpVector(float* values, int* exponents, float* output, int N) {
+  __cs149_vec_float vecVal;
+  __cs149_vec_int vecExp;
+  __cs149_vec_float vecRes;
+  __cs149_vec_int vecZero = _cs149_vset_int(0);
+  auto vecOne = _cs149_vset_int(1.0);
+  auto vecCeil = _cs149_vset_float(9.999999f);
+  __cs149_mask maskAll, maskExpIsZero, maskExpGtZero, maskOverFlow;
 
-  //
-  // CS149 STUDENTS TODO: Implement your vectorized version of
-  // clampedExpSerial() here.
-  //
-  // Your solution should work for any value of
-  // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
-  //
-  
+  for (size_t i = 0; i < N; i += VECTOR_WIDTH) {
+    maskAll = _cs149_init_ones(N - i);
+    _cs149_vload_float(vecVal, values + i, maskAll);  // x = values[i];
+    _cs149_vload_float(vecRes, values + i, maskAll);  // x = values[i];
+    _cs149_vload_int(vecExp, exponents + i, maskAll); // y = exponents[i];
+
+    _cs149_veq_int(maskExpIsZero, vecExp, vecZero, maskAll); // if ( y == 0 );
+    _cs149_vset_float(vecRes, 1.0, maskExpIsZero);           // output[i] = 1.f;
+
+    maskExpGtZero = _cs149_init_ones();
+    while (_cs149_cntbits(maskExpGtZero)) { // while (count > 0)
+      _cs149_vsub_int(vecExp, vecExp, vecOne, maskExpGtZero);    // count--
+      _cs149_vgt_int(maskExpGtZero, vecExp, vecZero, maskAll);   // if ( y > 0)
+      _cs149_vmult_float(vecRes, vecVal, vecRes, maskExpGtZero); // res *= x
+    }
+
+    _cs149_vgt_float(maskOverFlow, vecRes, vecCeil,
+                     maskAll);                          // if( result > 9.999f)
+    _cs149_vset_float(vecRes, 9.999999f, maskOverFlow); // result = 9.999f
+    _cs149_vstore_float(output + i, vecRes, maskAll);
+  }
 }
 
 // returns the sum of all elements in values

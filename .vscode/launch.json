@@ -8,7 +8,7 @@
             "name": "(gdb) 启动",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/programming-assignments-24fall/asst1/prog1_mandelbrot_threads/mandelbrot",
+            "program": "${workspaceFolder}/programming-assignments-23fall/asst1/prog2_vecintrin/myexp",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
