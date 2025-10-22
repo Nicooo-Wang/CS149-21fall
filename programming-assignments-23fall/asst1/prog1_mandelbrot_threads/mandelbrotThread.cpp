@@ -22,21 +22,6 @@ extern void mandelbrotSerial(
     int maxIterations,
     int output[]);
 
-//
-// MandelbrotSerialStep --
-//
-// Compute an image visualizing the mandelbrot set.  The resulting
-// array contains the number of iterations required before the complex
-// number corresponding to a pixel could be rejected from the set.
-//
-// * x0, y0, x1, y1 describe the complex coordinates mapping
-//   into the image viewport.
-// * width, height describe the size of the output image
-// * taskId describe the index of row tobe processed
-extern void mandelbrotSerialStep(float x0, float y0, float x1, float y1,
-                                 int width, int height, int taskId,
-                                 int numWorkers, int maxIterations,
-                                 int output[]);
 
 //
 // workerThreadStart --
@@ -50,26 +35,7 @@ void workerThreadStart(WorkerArgs * const args) {
     // program that uses two threads, thread 0 could compute the top
     // half of the image and thread 1 could compute the bottom half.
 
-    double startTime = CycleTimer::currentSeconds();
-    // method 1
-    // int rowsPerThread = args->height / args->numThreads;
-    // int startRow = args->threadId * rowsPerThread;
-    // int totalRows = rowsPerThread;
-    // if (args->threadId + 1 == args->numThreads) {
-    //     totalRows = args->height - startRow;
-    // }
-    // mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, args->width,
-    //                  args->height, startRow, totalRows, args->maxIterations,
-    //                  args->output);
-    
-    // method 2
-    mandelbrotSerialStep(args->x0, args->y0, args->x1, args->y1, args->width,
-                         args->height, args->threadId, args->numThreads,
-                         args->maxIterations, args->output);
-    double endTime = CycleTimer::currentSeconds();
-
-    printf("[mandelbrot thread %d]:\t\t[%.3f] ms\n", args->threadId,
-            (endTime - startTime) * 1000);
+    printf("Hello world from thread %d\n", args->threadId);
 }
 
 //
@@ -116,10 +82,10 @@ void mandelbrotThread(
     // Spawn the worker threads.  Note that only numThreads-1 std::threads
     // are created and the main application thread is used as a worker
     // as well.
-    for (int i = 1; i < numThreads; i++) {
-      workers[i] = std::thread(workerThreadStart, &args[i]);
+    for (int i=1; i<numThreads; i++) {
+        workers[i] = std::thread(workerThreadStart, &args[i]);
     }
-
+    
     workerThreadStart(&args[0]);
 
     // join worker threads
