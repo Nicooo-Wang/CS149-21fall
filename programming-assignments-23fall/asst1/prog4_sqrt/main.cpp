@@ -5,6 +5,7 @@
 
 #include "CycleTimer.h"
 #include "sqrt_ispc.h"
+#include "sqrtSerialAVX2.h"
 
 using namespace ispc;
 
@@ -78,22 +79,22 @@ int main() {
         output[i] = 0;
 
     //
-    // Tasking version of the ISPC code
+    // AVX2 code
     //
-    double minTaskISPC = 1e30;
+    double minAVX2 = 1e30;
     for (int i = 0; i < 3; ++i) {
         double startTime = CycleTimer::currentSeconds();
-        sqrt_ispc_withtasks(N, initialGuess, values, output);
+        sqrtAVX(N, initialGuess, values, output);
         double endTime = CycleTimer::currentSeconds();
-        minTaskISPC = std::min(minTaskISPC, endTime - startTime);
+        minAVX2 = std::min(minAVX2, endTime - startTime);
     }
 
-    printf("[sqrt task ispc]:\t[%.3f] ms\n", minTaskISPC * 1000);
+    printf("[sqrt task ispc]:\t[%.3f] ms\n", minAVX2 * 1000);
 
     verifyResult(N, output, gold);
 
     printf("\t\t\t\t(%.2fx speedup from ISPC)\n", minSerial/minISPC);
-    printf("\t\t\t\t(%.2fx speedup from task ISPC)\n", minSerial/minTaskISPC);
+    printf("\t\t\t\t(%.2fx speedup from AVX)\n", minSerial/minAVX2);
 
     delete [] values;
     delete [] output;
