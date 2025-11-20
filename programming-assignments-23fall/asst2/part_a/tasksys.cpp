@@ -1,4 +1,6 @@
 #include "tasksys.h"
+#include <vector>
+#include <thread>
 
 
 IRunnable::~IRunnable() {}
@@ -68,8 +70,16 @@ void TaskSystemParallelSpawn::run(IRunnable* runnable, int num_total_tasks) {
     // tasks sequentially on the calling thread.
     //
 
+    std::vector<std::thread> threads;
+
     for (int i = 0; i < num_total_tasks; i++) {
+      threads.emplace_back([runnable, i, num_total_tasks]() {
         runnable->runTask(i, num_total_tasks);
+      });
+    }
+
+    for (auto& thread:threads){
+      thread.join();
     }
 }
 
