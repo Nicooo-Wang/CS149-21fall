@@ -50,7 +50,7 @@ const char* TaskSystemParallelSpawn::name() {
     return "Parallel + Always Spawn";
 }
 
-TaskSystemParallelSpawn::TaskSystemParallelSpawn(int num_threads): ITaskSystem(num_threads) {
+TaskSystemParallelSpawn::TaskSystemParallelSpawn(int num_threads): ITaskSystem(num_threads) ,m_num_threads(num_threads) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -72,10 +72,17 @@ void TaskSystemParallelSpawn::run(IRunnable* runnable, int num_total_tasks) {
 
     std::vector<std::thread> threads;
 
-    for (int i = 0; i < num_total_tasks; i++) {
-      threads.emplace_back([runnable, i, num_total_tasks]() {
-        runnable->runTask(i, num_total_tasks);
-      });
+    int num_tasks_per_thread =
+        (num_total_tasks + m_num_threads - 1) / m_num_threads;
+
+    for (int i = 0; i < num_total_tasks; i += num_tasks_per_thread) {
+      threads.emplace_back(
+          [runnable, i, num_tasks_per_thread, num_total_tasks]() {
+            for (int j = i;
+                 j < std::min(num_total_tasks, i + num_tasks_per_thread); j++) {
+              runnable->runTask(j, num_total_tasks);
+            }
+          });
     }
 
     for (auto& thread:threads){
