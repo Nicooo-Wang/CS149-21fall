@@ -1,6 +1,8 @@
 #include "tasksys.h"
+#include <iostream>
 #include <vector>
 #include <thread>
+#include <chrono>
 
 
 IRunnable::~IRunnable() {}
@@ -111,19 +113,56 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
     return "Parallel + Thread Pool + Spin";
 }
 
-TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) {
+void TaskSystemParallelThreadPoolSpinning::WorkersSpawn(const int num_threads){
+    for (int i = 0; i < num_threads; i++)
+    {
+        m_workers.emplace_back([this] {
+            while(true)
+            {
+                std::unique_lock<std::mutex> lock(m_taskQueueLock);
+                this->m_cv.wait(lock, [this] { return m_isStop || !m_taskQueue.empty(); });
+                if(m_isStop && m_taskQueue.empty())
+                {
+                    return;
+                }
+                auto task = m_taskQueue.front();
+                m_taskQueue.pop();
+                lock.unlock();
+                task();
+            }
+        });
+    }
+}
+
+void TaskSystemParallelThreadPoolSpinning::WorkersDestory()
+{
+    m_isStop = true;
+    m_cv.notify_all();
+    for (auto &worker : m_workers)
+    {
+        if (worker.joinable())
+        {
+            worker.join();
+        }
+    }
+}
+
+TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) ,m_numWorkers(num_threads){
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    WorkersSpawn(num_threads);
 }
 
-TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {}
+TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning()
+{
+    WorkersDestory();
+}
 
 void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_total_tasks) {
-
 
     //
     // TODO: CS149 students will modify the implementation of this
@@ -131,8 +170,14 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // tasks sequentially on the calling thread.
     //
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    for (int i = 0; i < num_total_tasks; i++)
+    {
+        TaskAdd([i, num_total_tasks, runnable] { runnable->runTask(i, num_total_tasks); });
+    }
+    while (!m_taskQueue.empty())
+    {
+        std::cout << "queue size " << m_taskQueue.size() << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 
