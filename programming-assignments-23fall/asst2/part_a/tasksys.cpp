@@ -127,8 +127,10 @@ void TaskSystemParallelThreadPoolSpinning::WorkersSpawn(const int num_threads){
                 }
                 auto task = m_taskQueue.front();
                 m_taskQueue.pop();
+                ++m_finishedCount;
                 lock.unlock();
                 task();
+                --m_finishedCount;
             }
         });
     }
@@ -147,7 +149,9 @@ void TaskSystemParallelThreadPoolSpinning::WorkersDestory()
     }
 }
 
-TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) ,m_numWorkers(num_threads){
+TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads)
+    : ITaskSystem(num_threads), m_numWorkers(num_threads), m_finishedCount(0)
+{
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -169,15 +173,24 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // method in Part A.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
+    int tasksPerWorker = (num_total_tasks + m_numWorkers - 1) / m_numWorkers;
 
-    for (int i = 0; i < num_total_tasks; i++)
+    for (int startIdx = 0; startIdx < num_total_tasks; startIdx += tasksPerWorker)
     {
-        TaskAdd([i, num_total_tasks, runnable] { runnable->runTask(i, num_total_tasks); });
+        TaskAdd([startIdx, tasksPerWorker, num_total_tasks, runnable] {
+            for (int i = startIdx; i < std::min(tasksPerWorker + startIdx, num_total_tasks); i++)
+            {
+                runnable->runTask(i, num_total_tasks);
+            }
+        });
     }
-    while (!m_taskQueue.empty())
+    while (true)
     {
-        std::cout << "queue size " << m_taskQueue.size() << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::lock_guard<std::mutex> lock(m_taskQueueLock);
+        if (m_taskQueue.empty() && m_finishedCount.load() == 0)
+        {
+            return;
+        }
     }
 }
 

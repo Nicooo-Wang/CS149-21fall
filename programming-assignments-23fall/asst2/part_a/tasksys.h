@@ -58,6 +58,7 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
     std::mutex m_taskQueueLock;
     std::condition_variable m_cv;
     std::atomic<bool> m_isStop{false};
+    std::atomic<int> m_finishedCount;
 
     void WorkersSpawn(const int num_threads);
     void WorkersDestory();
