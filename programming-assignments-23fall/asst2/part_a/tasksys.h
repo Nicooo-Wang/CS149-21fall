@@ -3,10 +3,10 @@
 
 #include "itasksys.h"
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <queue>
-#include<condition_variable>
 #include <thread>
 #include <vector>
 
@@ -15,15 +15,15 @@
  * serial task execution engine.  See definition of ITaskSystem in
  * itasksys.h for documentation of the ITaskSystem interface.
  */
-class TaskSystemSerial: public ITaskSystem {
-    public:
-        TaskSystemSerial(int num_threads);
-        ~TaskSystemSerial();
-        const char* name();
-        void run(IRunnable* runnable, int num_total_tasks);
-        TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
-                                const std::vector<TaskID>& deps);
-        void sync();
+class TaskSystemSerial : public ITaskSystem
+{
+  public:
+    TaskSystemSerial(int num_threads);
+    ~TaskSystemSerial();
+    const char *name();
+    void run(IRunnable *runnable, int num_total_tasks);
+    TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks, const std::vector<TaskID> &deps);
+    void sync();
 };
 
 /*
@@ -32,17 +32,17 @@ class TaskSystemSerial: public ITaskSystem {
  * call.  See definition of ITaskSystem in itasksys.h for documentation
  * of the ITaskSystem interface.
  */
-class TaskSystemParallelSpawn: public ITaskSystem {
-  int m_num_threads{0};
+class TaskSystemParallelSpawn : public ITaskSystem
+{
+    int m_num_threads{0};
 
-public:
-  TaskSystemParallelSpawn(int num_threads);
-  ~TaskSystemParallelSpawn();
-  const char *name();
-  void run(IRunnable *runnable, int num_total_tasks);
-  TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks,
-                          const std::vector<TaskID> &deps);
-  void sync();
+  public:
+    TaskSystemParallelSpawn(int num_threads);
+    ~TaskSystemParallelSpawn();
+    const char *name();
+    void run(IRunnable *runnable, int num_total_tasks);
+    TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks, const std::vector<TaskID> &deps);
+    void sync();
 };
 
 /*
@@ -51,18 +51,21 @@ public:
  * thread pool. See definition of ITaskSystem in itasksys.h for
  * documentation of the ITaskSystem interface.
  */
-class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
+class TaskSystemParallelThreadPoolSpinning : public ITaskSystem
+{
     std::vector<std::thread> m_workers;
     int m_numWorkers;
-    std::queue<std::function<void()>> m_taskQueue;
-    std::mutex m_taskQueueLock;
+    std::mutex m_mtx;
     std::condition_variable m_cv;
-    std::atomic<bool> m_isStop{false};
-    std::atomic<int> m_finishedCount;
+    std::atomic<int> m_taskRemain{0};
+    std::atomic<int> m_taskFinished{0};
+    std::atomic<bool> m_isStop;
+
+    IRunnable *m_runnable{nullptr};
+    int m_runnableNum{0};
 
     void WorkersSpawn(const int num_threads);
     void WorkersDestory();
-    template <typename T> void TaskAdd(T &&Task);
 
   public:
     TaskSystemParallelThreadPoolSpinning(int num_threads);
@@ -73,29 +76,21 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
     void sync();
 };
 
-template <typename T> inline void TaskSystemParallelThreadPoolSpinning::TaskAdd(T &&task)
-{
-    std::unique_lock<std::mutex> lock(m_taskQueueLock);
-    m_taskQueue.emplace(std::forward<T>(task));
-    lock.unlock();
-    m_cv.notify_one();
-}
-
 /*
  * TaskSystemParallelThreadPoolSleeping: This class is the student's
  * optimized implementation of a parallel task execution engine that uses
  * a thread pool. See definition of ITaskSystem in
  * itasksys.h for documentation of the ITaskSystem interface.
  */
-class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
-    public:
-        TaskSystemParallelThreadPoolSleeping(int num_threads);
-        ~TaskSystemParallelThreadPoolSleeping();
-        const char* name();
-        void run(IRunnable* runnable, int num_total_tasks);
-        TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
-                                const std::vector<TaskID>& deps);
-        void sync();
+class TaskSystemParallelThreadPoolSleeping : public ITaskSystem
+{
+  public:
+    TaskSystemParallelThreadPoolSleeping(int num_threads);
+    ~TaskSystemParallelThreadPoolSleeping();
+    const char *name();
+    void run(IRunnable *runnable, int num_total_tasks);
+    TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks, const std::vector<TaskID> &deps);
+    void sync();
 };
 
 #endif
