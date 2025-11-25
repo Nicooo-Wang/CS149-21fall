@@ -8,8 +8,12 @@
             "name": "(gdb) 启动",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/programming-assignments-23fall/asst1/prog2_vecintrin/myexp",
-            "args": [],
+            "program": "${workspaceFolder}/programming-assignments-23fall/asst2/part_a/runtasks",
+            "args": [
+                "ping_pong_equal",
+                "--num_threads",
+                "1"
+            ],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],
