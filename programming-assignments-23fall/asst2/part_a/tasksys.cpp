@@ -146,7 +146,9 @@ void TaskSystemParallelThreadPoolSpinning::WorkersSpawn(const int num_threads)
                     return;
                 }
                 m_taskRemain--;
-                m_runnable->runTask(m_taskRemain, m_runnableNum);
+                int curTask = m_taskRemain;
+                lock.unlock();
+                m_runnable->runTask(curTask, m_runnableNum);
                 m_taskFinished++;
             }
         });
