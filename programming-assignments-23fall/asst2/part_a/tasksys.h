@@ -57,6 +57,8 @@ class TaskSystemParallelThreadPoolSpinning : public ITaskSystem
     int m_numWorkers;
     std::mutex m_mtx;
     std::condition_variable m_cv;
+    std::condition_variable m_completion_cv;  // 用于等待任务完成
+    std::mutex m_completionMtx;
     std::atomic<int> m_taskRemain{0};
     std::atomic<int> m_taskFinished{0};
     std::atomic<bool> m_isStop;
@@ -82,13 +84,11 @@ class TaskSystemParallelThreadPoolSpinning : public ITaskSystem
  * a thread pool. See definition of ITaskSystem in
  * itasksys.h for documentation of the ITaskSystem interface.
  */
-class TaskSystemParallelThreadPoolSleeping : public ITaskSystem
+class TaskSystemParallelThreadPoolSleeping : public TaskSystemParallelThreadPoolSpinning
 {
   public:
-    TaskSystemParallelThreadPoolSleeping(int num_threads);
-    ~TaskSystemParallelThreadPoolSleeping();
+    using TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning;
     const char *name();
-    void run(IRunnable *runnable, int num_total_tasks);
     TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks, const std::vector<TaskID> &deps);
     void sync();
 };
