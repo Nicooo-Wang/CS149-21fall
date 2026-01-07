@@ -2,6 +2,13 @@
 #define _TASKSYS_H
 
 #include "itasksys.h"
+#include <atomic>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <vector>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -59,15 +66,31 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * a thread pool. See definition of ITaskSystem in
  * itasksys.h for documentation of the ITaskSystem interface.
  */
-class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
-    public:
-        TaskSystemParallelThreadPoolSleeping(int num_threads);
-        ~TaskSystemParallelThreadPoolSleeping();
-        const char* name();
-        void run(IRunnable* runnable, int num_total_tasks);
-        TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
-                                const std::vector<TaskID>& deps);
-        void sync();
+class TaskSystemParallelThreadPoolSleeping : public ITaskSystem
+{
+  protected:
+    std::vector<std::thread> m_workers;
+    int m_numWorkers;
+    std::mutex m_mtx;
+    std::condition_variable m_cv;
+    std::condition_variable m_completion_cv; // 用于等待任务完成
+    std::mutex m_completionMtx;
+    std::atomic<int> m_taskRemain{0};
+    std::atomic<int> m_taskFinished{0};
+    std::atomic<bool> m_isStop;
+
+    IRunnable *m_runnable{nullptr};
+    int m_runnableNum{0};
+    void WorkersSpawn(int num_threads);
+    void WorkersDestroy();
+
+  public:
+    TaskSystemParallelThreadPoolSleeping(int num_threads);
+    ~TaskSystemParallelThreadPoolSleeping();
+    const char *name();
+    void run(IRunnable *runnable, int num_total_tasks);
+    TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks, const std::vector<TaskID> &deps);
+    void sync();
 };
 
 #endif
