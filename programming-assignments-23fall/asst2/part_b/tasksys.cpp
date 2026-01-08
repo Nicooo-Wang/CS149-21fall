@@ -126,45 +126,95 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
     return "Parallel + Thread Pool + Sleep";
 }
 
+void TaskSystemParallelThreadPoolSleeping::Scheduler::NotifyTaskFinished(const TaskID id)
+{
+    // 获取所有依赖于该任务的子任务
+    auto it = m_reverseDeps.find(id);
+    if (it == m_reverseDeps.end())
+    {
+        return;
+    }
+    for (const auto &childID : it->second)
+    {
+        // 减少子任务的未完成依赖计数
+        m_remainingDeps[childID]--;
+        // 如果子任务的所有依赖都已完成，则将其移到就绪队列
+        if (m_remainingDeps[childID] == 0)
+        {
+            auto taskIt = m_waitingMap.find(childID);
+            if (taskIt != m_waitingMap.end())
+            {
+                m_readyQueue.push(taskIt->second);
+                m_waitingMap.erase(taskIt);
+            }
+        }
+    }
+    m_reverseDeps.erase(it);
+}
+
+void TaskSystemParallelThreadPoolSleeping::Scheduler::AddTask(const TaskID id, const IRunnable *runnable,
+                                                              const std::vector<TaskID> &parents, const int numTasks)
+{
+    std::lock_guard<std::mutex> lock(m_mtx);
+    TaskInfo taskInfo(id, runnable, parents, numTasks);
+    // If no dependencies, add to ready queue
+    if (parents.empty())
+    {
+        m_readyQueue.push(taskInfo);
+        return;
+    }
+
+    m_waitingMap.emplace(id, taskInfo);
+    m_remainingDeps[id] = parents.size();
+
+    // 更新反向依赖关系
+    for (const auto &parent : parents)
+    {
+        m_reverseDeps[parent].push_back(id);
+    }
+}
+
+bool TaskSystemParallelThreadPoolSleeping::Scheduler::GetTask(TaskInfo &taskInfo)
+{
+    std::lock_guard<std::mutex> lock(m_mtx);
+    if (IsEmpty())
+    {
+        return false;
+    }
+    while (!IsEmpty() && m_readyQueue.front().IsFinished())
+    {
+        TaskInfo finishedTask = m_readyQueue.front();
+        // 完成任务时递减计数
+        (*finishedTask.taskRemain)--;
+        NotifyTaskFinished(finishedTask.id);
+        m_readyQueue.pop();
+    }
+    if (!m_readyQueue.empty())
+    {
+        taskInfo = m_readyQueue.front();
+        m_readyQueue.pop();
+        return true;
+    }
+    return false;
+}
+
+bool TaskSystemParallelThreadPoolSleeping::Scheduler::IsEmpty()
+{
+    std::lock_guard<std::mutex> lock(m_mtx);
+    return m_readyQueue.empty() && m_waitingMap.empty();
+}
+
 void TaskSystemParallelThreadPoolSleeping::WorkersSpawn(const int num_threads)
 {
     for (int i = 0; i < num_threads; i++)
     {
-        m_workers.emplace_back([this] {
-            int curTask = -1;
-            while (true)
-            {
-                {
-                    std::unique_lock<std::mutex> lock(m_mtx);
-                    this->m_cv.wait(lock, [this] { return m_isStop || m_taskRemain; });
-                    if (m_isStop && !m_taskRemain)
-                    {
-                        return;
-                    }
-                    if (!m_taskRemain)
-                    {
-                        continue;
-                    }
-                    m_taskRemain--;
-                    curTask = m_taskRemain;
-                }
-                m_runnable->runTask(curTask, m_runnableNum);
-
-                int finished = ++m_taskFinished;
-                if (finished == m_runnableNum)
-                {
-                    std::unique_lock<std::mutex> lock(m_completionMtx);
-                    m_completion_cv.notify_one();
-                }
-            }
-        });
     }
 }
 
 void TaskSystemParallelThreadPoolSleeping::WorkersDestroy()
 {
     m_isStop = true;
-    m_cv.notify_all();
+    m_stopCv.notify_all();
     for (auto &worker : m_workers)
     {
         if (worker.joinable())
@@ -175,7 +225,7 @@ void TaskSystemParallelThreadPoolSleeping::WorkersDestroy()
 }
 
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
-    : ITaskSystem(num_threads), m_numWorkers(num_threads), m_taskRemain(0), m_isStop(false)
+    : ITaskSystem(num_threads), m_numWorkers(num_threads), m_isStop(false)
 {
     //
     // TODO: CS149 student implementations may decide to perform setup
@@ -203,19 +253,6 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // tasks sequentially on the calling thread.
     //
 
-    {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        m_taskRemain = num_total_tasks;
-        m_taskFinished = 0;
-        m_runnableNum = num_total_tasks;
-        m_runnable = runnable;
-    }
-
-    m_cv.notify_all();
-
-    // 使用条件变量等待任务完成，避免忙等待
-    std::unique_lock<std::mutex> lock(m_completionMtx);
-    m_completion_cv.wait(lock, [this] { return m_taskFinished == m_runnableNum; });
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,

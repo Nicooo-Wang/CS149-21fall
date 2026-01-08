@@ -136,6 +136,7 @@ using namespace Concurrency;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "tasksys.h"
 
 // Signature of ispc-generated 'task' functions
 typedef void (*TaskFuncType)(void *data, int threadIndex, int threadCount, int taskIndex, int taskCount, int taskIndex0,
