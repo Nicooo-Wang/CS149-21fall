@@ -4,6 +4,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <functional>
+#include <set>
 #include <map>
 #include <mutex>
 #include <queue>
@@ -70,14 +71,12 @@ class TaskSystemParallelThreadPoolSleeping : public ITaskSystem
 {
   protected:
     std::vector<std::thread> m_workers;
-    int m_numWorkers;
+    int m_numWorkers = 0;
     std::atomic<bool> m_isStop;
-    std::condition_variable m_stopCv;
-    std::mutex m_stopMtx;
     struct TaskInfo
     {
         TaskID id;
-        const IRunnable *runnable;
+        IRunnable *runnable;
         std::vector<TaskID> parents; // 依赖的父节点
         int numTasks;
         std::shared_ptr<std::atomic<int>> taskRemain;   // 未完成的任务数量
@@ -85,9 +84,9 @@ class TaskSystemParallelThreadPoolSleeping : public ITaskSystem
 
         bool IsFinished()
         {
-            return *taskRemain == 0;
+            return *taskRemain <= 0;
         }
-        TaskInfo(const TaskID id_, const IRunnable *runnable_, const std::vector<TaskID> &parents_, const int numTasks_)
+        TaskInfo(const TaskID id_, IRunnable *runnable_, const std::vector<TaskID> &parents_, const int numTasks_)
             : id(id_), runnable(runnable_), parents(parents_), numTasks(numTasks_),
               taskRemain(std::make_shared<std::atomic<int>>(numTasks_)),
               parentRemain(std::make_shared<std::atomic<int>>(parents_.size()))
@@ -99,24 +98,33 @@ class TaskSystemParallelThreadPoolSleeping : public ITaskSystem
     class Scheduler
     {
       protected:
-        std::mutex m_mtx; // 唯一锁，保护所有容器
+        std::atomic<bool>& m_isStopRef;
+        std::recursive_mutex m_containerMtx;    // 唯一锁，保护所有容器
+        std::condition_variable_any m_notifyCv; // 用于通知工作线程有新任务到来或者停止
 
         std::queue<TaskInfo> m_readyQueue;       // 就绪队列
         std::map<TaskID, TaskInfo> m_waitingMap; // 等待队列
+        std::set<TaskID> m_finishedSet;
 
         // 依赖跟踪
         std::map<TaskID, int> m_remainingDeps;               // 每个任务还需多少依赖未完成
         std::map<TaskID, std::vector<TaskID>> m_reverseDeps; // 父 -> 子列表
         void NotifyTaskFinished(const TaskID id);
+        void UpdateWaitingTasks();
 
       public:
-        void AddTask(const TaskID id, const IRunnable *runnable, const std::vector<TaskID> &parents,
+        Scheduler(std::atomic<bool>& isStopRef) : m_isStopRef(isStopRef) {}
+        ~Scheduler() {}
+        void AddTask(const TaskID id, IRunnable *runnable, const std::vector<TaskID> &parents,
                      const int numTasks);
         bool GetTask(TaskInfo &taskInfo);
         bool IsEmpty();
+        void NotifyAll();
+        void NotifyOne();
     };
 
     Scheduler m_scheduler;
+    TaskID m_nextTaskID = 0;
 
     void WorkersSpawn(int num_threads);
     void WorkersDestroy();

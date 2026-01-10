@@ -8,9 +8,9 @@
             "name": "(gdb) 启动",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/programming-assignments-23fall/asst2/part_a/runtasks",
+            "program": "${workspaceFolder}/programming-assignments-23fall/asst2/part_b/runtasks",
             "args": [
-                "ping_pong_equal",
+                "simple_test_async",
                 "--num_threads",
                 "1"
             ],
