@@ -27,6 +27,37 @@ static inline int nextPow2(int n) {
     return n;
 }
 
+__global__ void exclusive_scan_kernel(int *input, int *output, int N)
+{
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= N)
+        return;
+    // upsweep phase
+    for (int phase = 1; phase < N; phase *= 2)
+    {
+        int stride = phase << 2;
+        if (index % stride == 0)
+        {
+            input[index] += input[index + 1];
+        }
+        __syncthreads();
+    }
+    // downsweep phase
+    if (index == 0)
+        input[N - 1] = 0;
+    for (int phase = N >> 1; phase > 0; phase >>= 1)
+    {
+        int stride = phase << 2;
+        if (index % stride == 0)
+        {
+            int temp = input[index];
+            __syncthreads();
+            input[index] += input[index - phase];
+            input[index - phase] = temp;
+            __syncthreads();
+        }
+    }
+}
 // exclusive_scan --
 //
 // Implementation of an exclusive scan on global memory array `input`,
@@ -53,8 +84,10 @@ void exclusive_scan(int* input, int N, int* result)
     // on the CPU.  Your implementation will need to make multiple calls
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
+    const int threadsPerBlock = THREADS_PER_BLOCK;
+    const int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-
+    exclusive_scan_kernel<<<blocks, threadsPerBlock>>>(input, result, N);
 }
 
 
