@@ -30,23 +30,28 @@ static inline int nextPow2(int n) {
 __global__ void exclusive_scan_kernel(int *input, int *output, int N)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index >= N)
+    if (index > N)
         return;
     // upsweep phase
-    for (int phase = 1; phase < N; phase *= 2)
+    for (int phase = 1; phase < N; phase <<= 1)
     {
-        int stride = phase << 2;
-        if (index % stride == 0)
+        int process_stride = phase << 1;
+        int offset = phase;
+        if (index % process_stride == 0 && index != 0)
         {
-            input[index] += input[index + 1];
+            input[index] += input[index - offset];
         }
         __syncthreads();
     }
-    // downsweep phase
-    if (index == 0)
-        input[N - 1] = 0;
-    for (int phase = N >> 1; phase > 0; phase >>= 1)
+    if (index == N - 1)
     {
+        input[index] = 0;
+    }
+    // downsweep phase
+    for (int phase = N ; phase > 0; phase >>= 1)
+    {
+        if(index > N)
+            return;
         int stride = phase << 2;
         if (index % stride == 0)
         {
