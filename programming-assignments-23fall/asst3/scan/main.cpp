@@ -24,7 +24,7 @@ void usage(const char* progname) {
 
 void cpu_exclusive_scan(int* start, int* end, int* output) {
 
-//#define PARALLEL 1
+#define PARALLEL 1
 #ifdef PARALLEL
 
     // note to students: this C code can be helpful when debugging the
@@ -166,6 +166,11 @@ int main(int argc, char** argv) {
             printf("Student GPU time: %.3f ms\n", 1000.f * cudaTime);
         } 
 
+        for (int i = 0; i < N; i++)
+        {
+            printf("idx[%d] = %d, ref: %d\n", i, resultarray[i], checkarray[i]);
+        }
+        
         // validate results
         for (int i = 0; i < N; i++) {
             if (checkarray[i] != resultarray[i]) {

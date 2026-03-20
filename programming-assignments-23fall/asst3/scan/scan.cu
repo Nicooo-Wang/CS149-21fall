@@ -30,16 +30,15 @@ static inline int nextPow2(int n) {
 __global__ void exclusive_scan_kernel(int *input, int *output, int N)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index > N)
+    if (index >= N)
         return;
     // upsweep phase
-    for (int phase = 1; phase < N; phase <<= 1)
+    for (int two_d = 1; two_d <= N / 2; two_d *= 2)
     {
-        int process_stride = phase << 1;
-        int offset = phase;
-        if (index % process_stride == 0 && index != 0)
+        int two_d_plus_1 = two_d << 1;
+        if (index % two_d_plus_1 == (two_d_plus_1 - 1) && index > 0)
         {
-            input[index] += input[index - offset];
+            input[index] += input[index - two_d];
         }
         __syncthreads();
     }
@@ -48,20 +47,18 @@ __global__ void exclusive_scan_kernel(int *input, int *output, int N)
         input[index] = 0;
     }
     // downsweep phase
-    for (int phase = N ; phase > 0; phase >>= 1)
+    for (int two_d = N / 2; two_d >= 1; two_d /= 2)
     {
-        if(index > N)
-            return;
-        int stride = phase << 2;
-        if (index % stride == 0)
+        int two_d_plus_1 = two_d * 2 ;
+        if (index % two_d_plus_1 == (two_d_plus_1 - 1))
         {
             int temp = input[index];
-            __syncthreads();
-            input[index] += input[index - phase];
-            input[index - phase] = temp;
-            __syncthreads();
+            input[index] += input[index - two_d];
+            input[index - two_d] = temp;
         }
+        __syncthreads();
     }
+    output[index] = input[index];
 }
 // exclusive_scan --
 //
@@ -91,6 +88,7 @@ void exclusive_scan(int* input, int N, int* result)
     // scan.
     const int threadsPerBlock = THREADS_PER_BLOCK;
     const int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
+    printf("array_size = %d, blocks = %d, threadsPerBLock = %d\n", N, blocks, threadsPerBlock);
 
     exclusive_scan_kernel<<<blocks, threadsPerBlock>>>(input, result, N);
 }
