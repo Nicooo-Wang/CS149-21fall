@@ -27,7 +27,15 @@ static inline int nextPow2(int n) {
     return n;
 }
 
-__global__ void exclusive_scan_kernel(int *input, int *output, int N)
+/**
+ * @brief block level exclusive scan kernel, using Hill-Steele algorithm
+ * 
+ * @param[in/out] input 
+ * @param[in/out] output 
+ * @param[in/out] N array length, must be a power of 2
+ * @return 
+ */
+__global__ void exclusive_scan_kernel(int *input, int *output, int N, int *sum)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= N)
@@ -44,8 +52,10 @@ __global__ void exclusive_scan_kernel(int *input, int *output, int N)
     }
     if (index == N - 1)
     {
+        sum[blockIdx.x] = input[index];
         input[index] = 0;
     }
+    __syncthreads();
     // downsweep phase
     for (int two_d = N / 2; two_d >= 1; two_d /= 2)
     {
@@ -58,6 +68,12 @@ __global__ void exclusive_scan_kernel(int *input, int *output, int N)
         }
         __syncthreads();
     }
+
+    if (index == N - 1)
+    {
+        input[index] = sum[blockIdx.x];
+    }
+    __syncthreads();
     output[index] = input[index];
 }
 // exclusive_scan --
@@ -90,7 +106,11 @@ void exclusive_scan(int* input, int N, int* result)
     const int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
     printf("array_size = %d, blocks = %d, threadsPerBLock = %d\n", N, blocks, threadsPerBlock);
 
-    exclusive_scan_kernel<<<blocks, threadsPerBlock>>>(input, result, N);
+    int* sumInput, *sumOutput;
+    cudaMalloc((void**)&sumInput, sizeof(int) * blocks);
+    cudaMalloc((void**)&sumOutput, sizeof(int) * blocks);
+
+    exclusive_scan_kernel<<<blocks, threadsPerBlock>>>(input, result, N, sumInput);
 }
 
 
