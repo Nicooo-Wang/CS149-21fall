@@ -14,6 +14,31 @@
 
 #define THREADS_PER_BLOCK 256
 
+void PrintDeviceIntArray(const int* d_data, int N) {
+    if (d_data == nullptr || N <= 0) {
+        printf("Invalid input: d_data is null or N <= 0\n");
+        return;
+    }
+    std::vector<int> h_data(N);
+    cudaError_t err = cudaMemcpy(
+        h_data.data(),
+        d_data,
+        N * sizeof(int),
+        cudaMemcpyDeviceToHost
+    );
+    if (err != cudaSuccess) {
+        printf("cudaMemcpy failed: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    printf("[");
+    for (int i = 0; i < N; i++) {
+        printf("%d", h_data[i]);
+        if (i != N - 1) {
+            printf(", ");
+        }
+    }
+    printf("]\n");
+}
 
 // helper function to round an integer up to the next power of 2
 static inline int nextPow2(int n) {
@@ -27,6 +52,21 @@ static inline int nextPow2(int n) {
     return n;
 }
 
+__global__ void add_num(const int *input,int * output, int N, const int *sumNum)
+{
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __shared__ int sumNumShared[1];
+    if (threadIdx.x == 0)
+    {
+        sumNumShared[0] = sumNum[blockIdx.x];
+    }
+    __syncthreads();
+    if (index >= N)
+        return;
+    output[index] = input[index] + sumNumShared[0];
+}
+
 /**
  * @brief block level exclusive scan kernel, using Hill-Steele algorithm
  * 
@@ -38,10 +78,12 @@ static inline int nextPow2(int n) {
 __global__ void exclusive_scan_kernel(int *input, int *output, int N, int *sum)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index >= N)
+    int threadsPerBlock = blockDim.x;
+    int upperBound = (blockIdx.x + 1) * blockDim.x;
+    if (index >= upperBound)
         return;
     // upsweep phase
-    for (int two_d = 1; two_d <= N / 2; two_d *= 2)
+    for (int two_d = 1; two_d <= threadsPerBlock / 2; two_d *= 2)
     {
         int two_d_plus_1 = two_d << 1;
         if (index % two_d_plus_1 == (two_d_plus_1 - 1) && index > 0)
@@ -50,14 +92,14 @@ __global__ void exclusive_scan_kernel(int *input, int *output, int N, int *sum)
         }
         __syncthreads();
     }
-    if (index == N - 1)
+    if (index == upperBound - 1)
     {
         sum[blockIdx.x] = input[index];
         input[index] = 0;
     }
     __syncthreads();
     // downsweep phase
-    for (int two_d = N / 2; two_d >= 1; two_d /= 2)
+    for (int two_d = threadsPerBlock / 2; two_d >= 1; two_d /= 2)
     {
         int two_d_plus_1 = two_d * 2 ;
         if (index % two_d_plus_1 == (two_d_plus_1 - 1))
@@ -69,12 +111,11 @@ __global__ void exclusive_scan_kernel(int *input, int *output, int N, int *sum)
         __syncthreads();
     }
 
-    if (index == N - 1)
+    output[index] = input[index];
+    if (index == upperBound - 1)
     {
         input[index] = sum[blockIdx.x];
     }
-    __syncthreads();
-    output[index] = input[index];
 }
 // exclusive_scan --
 //
@@ -102,15 +143,35 @@ void exclusive_scan(int* input, int N, int* result)
     // on the CPU.  Your implementation will need to make multiple calls
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
-    const int threadsPerBlock = THREADS_PER_BLOCK;
+    N = nextPow2(N);
+    const int threadsPerBlock = N >= THREADS_PER_BLOCK ? THREADS_PER_BLOCK : N;
     const int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
     printf("array_size = %d, blocks = %d, threadsPerBLock = %d\n", N, blocks, threadsPerBlock);
 
-    int* sumInput, *sumOutput;
-    cudaMalloc((void**)&sumInput, sizeof(int) * blocks);
-    cudaMalloc((void**)&sumOutput, sizeof(int) * blocks);
+    int roundedBlocks = nextPow2(blocks);
+    int *sumInput = nullptr, *sumOutput = nullptr;
+    cudaMalloc((void**)&sumInput, sizeof(int) * roundedBlocks);
+    cudaMalloc((void**)&sumOutput, sizeof(int) * roundedBlocks);
+    cudaMemset(sumInput, 0, sizeof(int) * roundedBlocks);
+    cudaMemset(sumOutput, 0, sizeof(int) * roundedBlocks);
 
+    // block level scan
     exclusive_scan_kernel<<<blocks, threadsPerBlock>>>(input, result, N, sumInput);
+    PrintDeviceIntArray(result, N);
+    cudaDeviceSynchronize();
+
+    if (blocks > 1)
+    {
+        // scan the block sums
+        exclusive_scan(sumInput, roundedBlocks, sumOutput);
+        cudaDeviceSynchronize();
+        // PrintDeviceIntArray(result, N);
+        // cudaDeviceSynchronize();
+        // add the block sums to each block
+        add_num<<<blocks, threadsPerBlock>>>(result, result, N, sumOutput);
+    }
+    cudaFree(sumInput);
+    cudaFree(sumOutput);
 }
 
 

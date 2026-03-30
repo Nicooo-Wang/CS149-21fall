@@ -24,7 +24,7 @@ void usage(const char* progname) {
 
 void cpu_exclusive_scan(int* start, int* end, int* output) {
 
-#define PARALLEL 1
+// #define PARALLEL 1
 #ifdef PARALLEL
 
     // note to students: this C code can be helpful when debugging the
