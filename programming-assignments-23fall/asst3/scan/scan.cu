@@ -14,7 +14,8 @@
 
 #define THREADS_PER_BLOCK 256
 
-void PrintDeviceIntArray(const int* d_data, int N) {
+void PrintDeviceIntArray(const char * tag, const int* d_data, int N) {
+    printf("%s: ", tag);
     if (d_data == nullptr || N <= 0) {
         printf("Invalid input: d_data is null or N <= 0\n");
         return;
@@ -157,7 +158,6 @@ void exclusive_scan(int* input, int N, int* result)
 
     // block level scan
     exclusive_scan_kernel<<<blocks, threadsPerBlock>>>(input, result, N, sumInput);
-    PrintDeviceIntArray(result, N);
     cudaDeviceSynchronize();
 
     if (blocks > 1)
@@ -257,6 +257,29 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration; 
 }
 
+__global__ void mark_repeats_flag_kernel(int* device_input, int length, int* device_output)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= length -1)
+        return;
+    
+    if(device_input[idx] == device_input[idx + 1])
+    {
+        device_output[idx] = 1;
+    }
+}
+
+__global__ void gen_idx_array_kernel(int* device_input, int length, int* device_output)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= length -1)
+        return;
+    
+    if (device_input[idx] != device_input[idx+1])
+    {
+        device_output[device_input[idx]] = idx;
+    }
+}
 
 // find_repeats --
 //
@@ -277,8 +300,29 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // exclusive_scan function with them. However, your implementation
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
+    int * device_repeats_output = nullptr;
+    PrintDeviceIntArray("input flag", device_input, length);
+    cudaMalloc((void**)&device_repeats_output, sizeof(int) * length);
+    cudaMemset(device_repeats_output, 0, sizeof(int) * length);
+    const int threadsPerBlock = length >= THREADS_PER_BLOCK ? THREADS_PER_BLOCK : length;
+    const int blocks = (length + threadsPerBlock - 1) / threadsPerBlock;
 
-    return 0; 
+    mark_repeats_flag_kernel<<<blocks, threadsPerBlock>>>(device_input, length, device_repeats_output);
+    PrintDeviceIntArray("repeats flag", device_repeats_output, length);
+    cudaDeviceSynchronize();
+
+    exclusive_scan(device_repeats_output, length, device_repeats_output);
+    PrintDeviceIntArray("scanned repeats flag", device_repeats_output, length);
+    cudaDeviceSynchronize();
+    int res = 0;
+    cudaMemcpy(&res, &device_repeats_output[length - 1], sizeof(int), cudaMemcpyDeviceToHost);
+
+    gen_idx_array_kernel<<<blocks, threadsPerBlock>>>(device_repeats_output, length, device_output);
+    PrintDeviceIntArray("idx array", device_output, length);
+
+    cudaFree(device_repeats_output);
+
+    return res; 
 }
 
 
