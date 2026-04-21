@@ -1,3 +1,8 @@
+#define ST_TILE_SIZE 16
+#define ST_MAX_CIRCLES_PER_TILE 8000
+#define BLOCKSIZE (ST_TILE_SIZE * ST_TILE_SIZE)
+#define SCAN_BLOCK_DIM BLOCKSIZE
+
 #include <string>
 #include <algorithm>
 #include <math.h>
@@ -13,6 +18,7 @@
 #include "noise.h"
 #include "sceneLoader.h"
 #include "util.h"
+#include "exclusiveScan.cu_inl"
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Putting all the cuda kernels here
@@ -426,76 +432,87 @@ __global__ void kernelRenderCircles() {
         }
     }
 }
-#define ST_TILE_SIZE 16
-#define ST_MAX_CIRCLES_PER_TILE 8000
-
-__device__ __inline__ void GetCirclesInTile(const int blockX, const int blockY, int *circlesInTile,
-                                            int *numCirclesInTile)
-{
-    int imageWidth = cuConstRendererParams.imageWidth;
-    int imageHeight = cuConstRendererParams.imageHeight;
-    int tileMinX = blockX * ST_TILE_SIZE;
-    int tileMaxX = tileMinX + ST_TILE_SIZE;
-    int tileMinY = blockY * ST_TILE_SIZE;
-    int tileMaxY = tileMinY + ST_TILE_SIZE;
-    float tileMinXNorm = (float)tileMinX / imageWidth;
-    float tileMaxXNorm = (float)tileMaxX / imageWidth;
-    float tileMinYNorm = (float)tileMinY / imageHeight;
-    float tileMaxYNorm = (float)tileMaxY / imageHeight;
-
-
-    int count = 0;
-    for (int i=0; i<cuConstRendererParams.numCircles; i++) {
-        float3 p = *(float3*)(&cuConstRendererParams.position[3*i]);
-        float r = cuConstRendererParams.radius[i];
-        if (p.x + r < tileMinXNorm || p.x - r > tileMaxXNorm || p.y + r < tileMinYNorm || p.y - r > tileMaxYNorm) {
-            continue;
-        }
-        if (count < ST_MAX_CIRCLES_PER_TILE) {
-            circlesInTile[count] = i;
-            count++;
-        }
-    }
-    *numCirclesInTile = count;
-}
 
 __global__ void kernelRenderCirclesTiled(){
-    int blockX = blockIdx.x;
-    int blockY = blockIdx.y;
     int tileX = threadIdx.x;
     int tileY = threadIdx.y;
-
-    __shared__ int circlesInTile[ST_MAX_CIRCLES_PER_TILE];
-    __shared__ int numcirclesInTile;
-    __shared__ float4 circleDataInTile[ST_TILE_SIZE][ST_TILE_SIZE]; // x,y,radius,color
-    circleDataInTile[tileY][tileX] = make_float4(1.f, 1.f, 1.f, 1.f);
+    int linearIdx = tileY * blockDim.x + tileX;
 
     int imageWidth = cuConstRendererParams.imageWidth;
     int imageHeight = cuConstRendererParams.imageHeight;
-    int glbX = blockX * ST_TILE_SIZE + tileX;
-    int glbY = blockY * ST_TILE_SIZE + tileY;
-    if(tileX==0 && tileY==0){
-        GetCirclesInTile(blockX, blockY, circlesInTile, &numcirclesInTile);
-    }
-    __syncthreads();
-
-    if (glbX >= imageWidth || glbY >= imageHeight) {
-        return;
-    }
+    int glbX = blockIdx.x * ST_TILE_SIZE + tileX;
+    int glbY = blockIdx.y * ST_TILE_SIZE + tileY;
 
     float invWidth = 1.f / imageWidth;
     float invHeight = 1.f / imageHeight;
-    for (int i = 0; i < numcirclesInTile; i++) {
-        int circleIndex = circlesInTile[i];
-        float3 p = *(float3*)(&cuConstRendererParams.position[3*circleIndex]);
-        float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(glbX) + 0.5f),
-                                             invHeight * (static_cast<float>(glbY) + 0.5f));
-        shadePixel(circleIndex, pixelCenterNorm, p, &circleDataInTile[tileY][tileX]);
+    float tileMinX = (float)(blockIdx.x * ST_TILE_SIZE) * invWidth;
+    float tileMaxX = (float)(blockIdx.x * ST_TILE_SIZE + ST_TILE_SIZE) * invWidth;
+    float tileMinY = (float)(blockIdx.y * ST_TILE_SIZE) * invHeight;
+    float tileMaxY = (float)(blockIdx.y * ST_TILE_SIZE + ST_TILE_SIZE) * invHeight;
+
+    __shared__ float4 pixelColors[ST_TILE_SIZE][ST_TILE_SIZE];
+    pixelColors[tileY][tileX] = make_float4(1.f, 1.f, 1.f, 1.f);
+
+    // prefix sum 用的 shared memory
+    __shared__ uint prefixSumInput[BLOCKSIZE];
+    __shared__ uint prefixSumOutput[BLOCKSIZE];
+    __shared__ uint prefixSumScratch[2 * BLOCKSIZE];
+    __shared__ int compactCircles[BLOCKSIZE];
+    __shared__ int numHits;
+
+    int numCircles = cuConstRendererParams.numCircles;
+
+    // 每批 256 个圆，每个线程检查一个
+    for (int batch = 0; batch < numCircles; batch += BLOCKSIZE) {
+        int circleIdx = batch + linearIdx;
+
+        // 检查这个圆是否和 tile 相交
+        uint hit = 0;
+        if (circleIdx < numCircles) {
+            float3 p = *(float3*)(&cuConstRendererParams.position[3 * circleIdx]);
+            float r = cuConstRendererParams.radius[circleIdx];
+            if (!(p.x + r < tileMinX || p.x - r > tileMaxX ||
+                  p.y + r < tileMinY || p.y - r > tileMaxY)) {
+                hit = 1;
+            }
+        }
+
+        // exclusive scan 得到每个命中圆的写入位置
+        prefixSumInput[linearIdx] = hit;
+        __syncthreads();
+        sharedMemExclusiveScan(linearIdx, prefixSumInput, prefixSumOutput,
+                               prefixSumScratch, BLOCKSIZE);
+        __syncthreads();
+
+        // 命中的线程把圆索引写到紧凑数组里
+        if (hit) {
+            compactCircles[prefixSumOutput[linearIdx]] = circleIdx;
+        }
+
+        // 最后一个线程算出本批总命中数
+        if (linearIdx == BLOCKSIZE - 1) {
+            numHits = prefixSumOutput[BLOCKSIZE - 1] + hit;
+        }
+        __syncthreads();
+
+        // 所有线程对自己的像素做 shading
+        if (glbX < imageWidth && glbY < imageHeight) {
+            for (int i = 0; i < numHits; i++) {
+                int ci = compactCircles[i];
+                float3 p = *(float3*)(&cuConstRendererParams.position[3 * ci]);
+                float2 pixelCenterNorm = make_float2(
+                    invWidth * (static_cast<float>(glbX) + 0.5f),
+                    invHeight * (static_cast<float>(glbY) + 0.5f));
+                shadePixel(ci, pixelCenterNorm, p, &pixelColors[tileY][tileX]);
+            }
+        }
+        __syncthreads();
     }
-    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX)] = circleDataInTile[tileY][tileX].x;
-    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX) + 1] = circleDataInTile[tileY][tileX].y;
-    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX) + 2] = circleDataInTile[tileY][tileX].z;
-    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX) + 3] = circleDataInTile[tileY][tileX].w;
+
+    if (glbX < imageWidth && glbY < imageHeight) {
+        int offset = 4 * (glbY * imageWidth + glbX);
+        *(float4*)(&cuConstRendererParams.imageData[offset]) = pixelColors[tileY][tileX];
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
