@@ -426,6 +426,77 @@ __global__ void kernelRenderCircles() {
         }
     }
 }
+#define ST_TILE_SIZE 16
+#define ST_MAX_CIRCLES_PER_TILE 8000
+
+__device__ __inline__ void GetCirclesInTile(const int blockX, const int blockY, int *circlesInTile,
+                                            int *numCirclesInTile)
+{
+    int imageWidth = cuConstRendererParams.imageWidth;
+    int imageHeight = cuConstRendererParams.imageHeight;
+    int tileMinX = blockX * ST_TILE_SIZE;
+    int tileMaxX = tileMinX + ST_TILE_SIZE;
+    int tileMinY = blockY * ST_TILE_SIZE;
+    int tileMaxY = tileMinY + ST_TILE_SIZE;
+    float tileMinXNorm = (float)tileMinX / imageWidth;
+    float tileMaxXNorm = (float)tileMaxX / imageWidth;
+    float tileMinYNorm = (float)tileMinY / imageHeight;
+    float tileMaxYNorm = (float)tileMaxY / imageHeight;
+
+
+    int count = 0;
+    for (int i=0; i<cuConstRendererParams.numCircles; i++) {
+        float3 p = *(float3*)(&cuConstRendererParams.position[3*i]);
+        float r = cuConstRendererParams.radius[i];
+        if (p.x + r < tileMinXNorm || p.x - r > tileMaxXNorm || p.y + r < tileMinYNorm || p.y - r > tileMaxYNorm) {
+            continue;
+        }
+        if (count < ST_MAX_CIRCLES_PER_TILE) {
+            circlesInTile[count] = i;
+            count++;
+        }
+    }
+    *numCirclesInTile = count;
+}
+
+__global__ void kernelRenderCirclesTiled(){
+    int blockX = blockIdx.x;
+    int blockY = blockIdx.y;
+    int tileX = threadIdx.x;
+    int tileY = threadIdx.y;
+
+    __shared__ int circlesInTile[ST_MAX_CIRCLES_PER_TILE];
+    __shared__ int numcirclesInTile;
+    __shared__ float4 circleDataInTile[ST_TILE_SIZE][ST_TILE_SIZE]; // x,y,radius,color
+    circleDataInTile[tileY][tileX] = make_float4(1.f, 1.f, 1.f, 1.f);
+
+    int imageWidth = cuConstRendererParams.imageWidth;
+    int imageHeight = cuConstRendererParams.imageHeight;
+    int glbX = blockX * ST_TILE_SIZE + tileX;
+    int glbY = blockY * ST_TILE_SIZE + tileY;
+    if(tileX==0 && tileY==0){
+        GetCirclesInTile(blockX, blockY, circlesInTile, &numcirclesInTile);
+    }
+    __syncthreads();
+
+    if (glbX >= imageWidth || glbY >= imageHeight) {
+        return;
+    }
+
+    float invWidth = 1.f / imageWidth;
+    float invHeight = 1.f / imageHeight;
+    for (int i = 0; i < numcirclesInTile; i++) {
+        int circleIndex = circlesInTile[i];
+        float3 p = *(float3*)(&cuConstRendererParams.position[3*circleIndex]);
+        float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(glbX) + 0.5f),
+                                             invHeight * (static_cast<float>(glbY) + 0.5f));
+        shadePixel(circleIndex, pixelCenterNorm, p, &circleDataInTile[tileY][tileX]);
+    }
+    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX)] = circleDataInTile[tileY][tileX].x;
+    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX) + 1] = circleDataInTile[tileY][tileX].y;
+    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX) + 2] = circleDataInTile[tileY][tileX].z;
+    cuConstRendererParams.imageData[4 * (glbY * imageWidth + glbX) + 3] = circleDataInTile[tileY][tileX].w;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
@@ -500,6 +571,9 @@ CudaRenderer::setup() {
     printf("---------------------------------------------------------\n");
     printf("Initializing CUDA for CudaRenderer\n");
     printf("Found %d CUDA devices\n", deviceCount);
+
+    // DIAGNOSTIC: Verify scene data is loaded
+    printf("[DIAGNOSTIC] sceneName=%d, numCircles=%d\n", sceneName, numCircles);
 
     for (int i=0; i<deviceCount; i++) {
         cudaDeviceProp deviceProps;
@@ -636,10 +710,11 @@ CudaRenderer::advanceAnimation() {
 void
 CudaRenderer::render() {
 
-    // 256 threads per block is a healthy number
-    dim3 blockDim(256, 1);
-    dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
+    dim3 blockDim(ST_TILE_SIZE, ST_TILE_SIZE, 1);
+    dim3 gridDim(
+        (image->width + blockDim.x - 1) / blockDim.x,
+        (image->height + blockDim.y - 1) / blockDim.y);
 
-    kernelRenderCircles<<<gridDim, blockDim>>>();
+    kernelRenderCirclesTiled<<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
 }
