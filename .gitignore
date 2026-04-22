@@ -32,3 +32,4 @@
 *.app
 *vgcore*
 CLAUDE.md
+*code-workspace
