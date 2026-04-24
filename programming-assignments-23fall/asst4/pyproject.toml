@@ -2,12 +2,17 @@
 name = "asst4"
 version = "0.1.0"
 description = "CS149 Assignment 4 - Attention Optimizations"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"
 dependencies = [
-    "torch==2.2.2",
+    "torch==2.0.1+cpu",
     "numpy<2",
     "tiktoken",
+    "setuptools<78",
 ]
+
+[tool.uv.index]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 
 [build-system]
 requires = ["setuptools>=61.0"]
