@@ -11,6 +11,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.cpp_extension import load
 from torch.profiler import profile, record_function, ProfilerActivity
+import module_ref as ms
 
 NUM_THREADS=8
 torch.set_num_threads(NUM_THREADS)
