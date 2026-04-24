@@ -73,6 +73,64 @@ std::vector<float> formatTensor(torch::Tensor tensor) {
 //                  PART 1: NAIVE ATTENTION                   //
 // ---------------------------------------------------------- //
 
+void SoftMaxTiled4D(std::vector<float> &mat, int dimB, int dimH, int dimM, int dimN, int b, int h, int mStart, int mEnd)
+{
+    for (int m = mStart; m < mEnd && m < dimM; m++)
+    {
+        float sumExp = 0.0;
+        for (int n = 0; n < dimN; n++)
+        {
+            float val = fourDimRead(mat, b, h, m, n, dimH, dimM, dimN);
+            float res = std::exp(val);
+            fourDimWrite(mat, b, h, m, n, dimH, dimM, dimN, res);
+            sumExp += res;
+        }
+
+        for (int n = 0; n < dimN; n++)
+        {
+            float val = fourDimRead(mat, b, h, m, n, dimH, dimM, dimN);
+            float softmaxVal = val / sumExp;
+            fourDimWrite(mat, b, h, m, n, dimH, dimM, dimN, softmaxVal);
+        }
+    }
+
+}
+
+void MatmulTransposeTiled4D(std::vector<float> &A, std::vector<float> &B, std::vector<float> &C, int dimB, int dimH,
+                 int dimM, int dimN, int dimK, int tileMStart, int tileMEnd, int tileNStart,
+                 int tileNEnd)
+{
+    for (int m =tileMStart; m<tileMEnd && m < dimM;m++){
+        for (int n = tileNStart; n<tileNEnd && m < dimN;n++){
+            float sum = 0.0;
+            for (int k = 0; k < dimK; k++)
+            {
+                sum += fourDimRead(A, dimB, dimH, m, k, dimH, dimM, dimK) *
+                       fourDimRead(B, dimB, dimH, n, k, dimH, dimN, dimK);
+            }
+            fourDimWrite(C, dimB, dimH, m, n, dimH, dimM, dimN, sum);
+        }
+    }
+}
+
+void MatmulTiled4D(std::vector<float> &A, std::vector<float> &B, std::vector<float> &C, int dimB, int dimH,
+                 int dimM, int dimN, int dimK, int tileMStart, int tileMEnd, int tileNStart,
+                 int tileNEnd)
+{
+    for (int m = tileMStart; m < tileMEnd && m < dimM; m++)
+    {
+        for (int n = tileNStart; n<tileNEnd && m < dimN;n++){
+            float sum = 0.0;
+            for (int k = 0; k < dimK; k++)
+            {
+                sum += fourDimRead(A, dimB, dimH, m, k, dimH, dimM, dimK) *
+                       fourDimRead(B, dimB, dimH, k, n, dimH, dimK, dimN);
+            }
+            fourDimWrite(C, dimB, dimH, m, n, dimH, dimM, dimN, sum);
+        }
+    }
+}
+
 torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, torch::Tensor VTensor, torch::Tensor QK_tTensor,
                 int B, int H, int N, int d){
 
@@ -124,7 +182,22 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
          }
     */
     
-    // -------- YOUR CODE HERE  -------- //
+    for (int b = 0; b < B; b++)
+    {
+        for(int h = 0; h < H; h++)
+        {
+            // Compute QK^t and store in QK_t
+            MatmulTransposeTiled4D(Q, K, QK_t, B, H, N, d, N, 0, N, 0, N);
+
+            // Apply Softmax to QK_t (you can implement this yourself or use a library function)
+            // YOUR CODE HERE
+            SoftMaxTiled4D(QK_t, b, h, N, N, b, h, 0, N);
+
+            // Compute O = QK^tV and store in O
+            MatmulTiled4D(QK_t, V, O, B, H, N, N, d, 0, N, 0, d);
+        }
+    }
+    
     
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
