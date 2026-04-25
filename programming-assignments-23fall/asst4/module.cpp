@@ -94,17 +94,28 @@ bool MatmulTranspose4Dto2D(std::vector<float> &Q, std::vector<float> &K_t, std::
     int M = QDims[2];
     int N = QDims[2];
     int K = QDims[3];
+
+    const int K_TILE = 32;
+
+    // Zero the output tile
     for (int m = mStart; m < mEnd; m++)
-    {
-        for (int n = nStart; n < nEnd; n++)
-        {
-            float sum = 0.0;
-            for (int k = 0; k < K; k++)
-            {
-                sum +=
-                    fourDimRead(Q, selectB, selectH, m, k, H, M, K) * fourDimRead(K_t, selectB, selectH, n, k, H, N, K);
+        for (int n = nStart; n < nEnd; n++) {
+            float zero = 0.0f;
+            twoDimWrite(QK_t, m, n, N, zero);
+        }
+
+    // K-tiled accumulation
+    for (int k = 0; k < K; k += K_TILE) {
+        int kEnd = std::min(k + K_TILE, K);
+        for (int m = mStart; m < mEnd; m++) {
+            for (int n = nStart; n < nEnd; n++) {
+                float acc = twoDimRead(QK_t, m, n, N);
+                for (int kk = k; kk < kEnd; kk++) {
+                    acc += fourDimRead(Q, selectB, selectH, m, kk, H, M, K) *
+                           fourDimRead(K_t, selectB, selectH, n, kk, H, N, K);
+                }
+                twoDimWrite(QK_t, m, n, N, acc);
             }
-            twoDimWrite(QK_t, m, n, N, sum);
         }
     }
 
@@ -131,16 +142,27 @@ bool Matmul2Dto4D(std::vector<float> &QK_t, std::vector<float> &V, std::vector<f
     int N = VDims[3];
     int M = QK_tDims[0];
 
+    const int K_TILE = 32;
+
+    // Zero the output tile
     for (int m = mStart; m < mEnd; m++)
-    {
-        for (int n = nStart; n < nEnd; n++)
-        {
-            float sum = 0.0;
-            for (int k = 0; k < K; k++)
-            {
-                sum += twoDimRead(QK_t, m, k, K) * fourDimRead(V, selectB, selectH, k, n, H, K, N);
+        for (int n = nStart; n < nEnd; n++) {
+            float zero = 0.0f;
+            fourDimWrite(O, selectB, selectH, m, n, H, M, N, zero);
+        }
+
+    // K-tiled accumulation
+    for (int k = 0; k < K; k += K_TILE) {
+        int kEnd = std::min(k + K_TILE, K);
+        for (int m = mStart; m < mEnd; m++) {
+            for (int n = nStart; n < nEnd; n++) {
+                float acc = fourDimRead(O, selectB, selectH, m, n, H, M, N);
+                for (int kk = k; kk < kEnd; kk++) {
+                    acc += twoDimRead(QK_t, m, kk, K) *
+                           fourDimRead(V, selectB, selectH, kk, n, H, K, N);
+                }
+                fourDimWrite(O, selectB, selectH, m, n, H, M, N, acc);
             }
-            fourDimWrite(O, selectB, selectH, m, n, H, M, N, sum);
         }
     }
 
@@ -225,19 +247,40 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
          }
     */
     
+    int TILE = 64;
+
     for (int b = 0; b < B; b++)
     {
         for(int h = 0; h < H; h++)
         {
-            // Compute QK^t and store in QK_t
-            MatmulTranspose4Dto2D(Q, K, QK_t, {B, H, N, d}, {B, H, N, d}, b, h, 0, N, 0, N);
+            // Compute QK^t and store in QK_t (tiled on m, n)
+            for (int tm = 0; tm < N; tm += TILE)
+            {
+                int mEnd = std::min(tm + TILE, N);
+                for (int tn = 0; tn < N; tn += TILE)
+                {
+                    int nEnd = std::min(tn + TILE, N);
+                    MatmulTranspose4Dto2D(Q, K, QK_t, {B, H, N, d}, {B, H, N, d}, b, h, tm, mEnd, tn, nEnd);
+                }
+            }
 
-            // Apply Softmax to QK_t (you can implement this yourself or use a library function)
-            // YOUR CODE HERE
-            SoftMax2D(QK_t, {N, N}, 0, N);
+            // Apply Softmax to QK_t (tiled on m)
+            for (int tm = 0; tm < N; tm += TILE)
+            {
+                int mEnd = std::min(tm + TILE, N);
+                SoftMax2D(QK_t, {N, N}, tm, mEnd);
+            }
 
-            // Compute O = QK^tV and store in O
-            Matmul2Dto4D(QK_t, V, O, {N, N}, {B, H, N, d}, b, h, 0, N, 0, d);
+            // Compute O = QK^tV and store in O (tiled on m, n)
+            for (int tm = 0; tm < N; tm += TILE)
+            {
+                int mEnd = std::min(tm + TILE, N);
+                for (int tn = 0; tn < d; tn += TILE)
+                {
+                    int nEnd = std::min(tn + TILE, d);
+                    Matmul2Dto4D(QK_t, V, O, {N, N}, {B, H, N, d}, b, h, tm, mEnd, tn, nEnd);
+                }
+            }
         }
     }
     
