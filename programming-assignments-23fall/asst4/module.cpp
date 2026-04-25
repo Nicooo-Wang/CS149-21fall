@@ -73,62 +73,105 @@ std::vector<float> formatTensor(torch::Tensor tensor) {
 //                  PART 1: NAIVE ATTENTION                   //
 // ---------------------------------------------------------- //
 
-void SoftMaxTiled4D(std::vector<float> &mat, int dimB, int dimH, int dimM, int dimN, int b, int h, int mStart, int mEnd)
+bool MatmulTranspose4Dto2D(std::vector<float> &Q, std::vector<float> &K_t, std::vector<float> &QK_t,
+                           std::vector<int> QDims, std::vector<int> K_tDims, int selectB, int selectH, int mStart,
+                           int mEnd, int nStart, int nEnd)
 {
-    for (int m = mStart; m < mEnd && m < dimM; m++)
+    if (QDims.size() != 4 || K_tDims.size() != 4 ) {
+        std::cerr << "Invalid dimensions for Q, K^t." << std::endl;
+        return false;
+    }
+    if (QDims[0] != K_tDims[0] || QDims[1] != K_tDims[1] || QDims[3] != K_tDims[3] || QDims[2] != K_tDims[2])
+    {
+        std::cerr << "Batch size, number of heads, and embedding dimensionality must match for Q and K^t." << std::endl;
+        std::cerr << "Q Dims: " << QDims[0] << " " << QDims[1] << " " << QDims[2] << " " << QDims[3] << std::endl;
+        std::cerr << "K^t Dims: " << K_tDims[0] << " " << K_tDims[1] << " " << K_tDims[2] << " " << K_tDims[3] << std::endl;
+        return false;
+    }
+     
+    int B = QDims[0];
+    int H = QDims[1];
+    int M = QDims[2];
+    int N = QDims[2];
+    int K = QDims[3];
+    for (int m = mStart; m < mEnd; m++)
+    {
+        for (int n = nStart; n < nEnd; n++)
+        {
+            float sum = 0.0;
+            for (int k = 0; k < K; k++)
+            {
+                sum +=
+                    fourDimRead(Q, selectB, selectH, m, k, H, M, K) * fourDimRead(K_t, selectB, selectH, n, k, H, N, K);
+            }
+            twoDimWrite(QK_t, m, n, N, sum);
+        }
+    }
+
+    return true;
+}
+
+bool Matmul2Dto4D(std::vector<float> &QK_t, std::vector<float> &V, std::vector<float> &O, std::vector<int> QK_tDims,
+                  std::vector<int> VDims, int selectB, int selectH, int mStart, int mEnd, int nStart, int nEnd)
+{
+    if (QK_tDims.size() != 2 || VDims.size() != 4) {
+        std::cerr << "Invalid dimensions for QK^t or V." << std::endl;
+        return false;
+    }
+    if (QK_tDims[1] != VDims[2] ) {
+        std::cerr << "Sequence length of QK^t must match sequence length of V." << std::endl;
+        std::cerr << "QK^t Dims: " << QK_tDims[0] << " " << QK_tDims[1] << std::endl;
+        std::cerr << "V Dims: " << VDims[0] << " " << VDims[1] << " " << VDims[2] << " " << VDims[3] << std::endl;
+        return false;
+    }
+
+    int B = VDims[0];
+    int H = VDims[1];
+    int K = VDims[2];
+    int N = VDims[3];
+    int M = QK_tDims[0];
+
+    for (int m = mStart; m < mEnd; m++)
+    {
+        for (int n = nStart; n < nEnd; n++)
+        {
+            float sum = 0.0;
+            for (int k = 0; k < K; k++)
+            {
+                sum += twoDimRead(QK_t, m, k, K) * fourDimRead(V, selectB, selectH, k, n, H, K, N);
+            }
+            fourDimWrite(O, selectB, selectH, m, n, H, M, N, sum);
+        }
+    }
+
+    return true;
+}
+
+bool SoftMax2D(std::vector<float> &mat,std::vector<int> matDims, int mStart,int mEnd)
+{
+    if (matDims.size() != 2) {
+        std::cerr << "Invalid dimensions for matrix." << std::endl;
+        return false;
+    }
+    int M = matDims[0];
+    int N = matDims[1];
+    for (int m = mStart; m < mEnd; m++)
     {
         float sumExp = 0.0;
-        for (int n = 0; n < dimN; n++)
-        {
-            float val = fourDimRead(mat, b, h, m, n, dimH, dimM, dimN);
-            float res = std::exp(val);
-            fourDimWrite(mat, b, h, m, n, dimH, dimM, dimN, res);
+        for (int n = 0; n < N; n++){
+            float res = exp(twoDimRead(mat, m, n, N));
             sumExp += res;
+            twoDimWrite(mat, m, n, N, res);
         }
-
-        for (int n = 0; n < dimN; n++)
+        for (int n = 0; n < N; n++)
         {
-            float val = fourDimRead(mat, b, h, m, n, dimH, dimM, dimN);
-            float softmaxVal = val / sumExp;
-            fourDimWrite(mat, b, h, m, n, dimH, dimM, dimN, softmaxVal);
+            float val = twoDimRead(mat, m, n, N);
+            float res = val / sumExp;
+            twoDimWrite(mat, m, n, N, res);
         }
     }
 
-}
-
-void MatmulTransposeTiled4D(std::vector<float> &A, std::vector<float> &B, std::vector<float> &C, int dimB, int dimH,
-                 int dimM, int dimN, int dimK, int tileMStart, int tileMEnd, int tileNStart,
-                 int tileNEnd)
-{
-    for (int m =tileMStart; m<tileMEnd && m < dimM;m++){
-        for (int n = tileNStart; n<tileNEnd && m < dimN;n++){
-            float sum = 0.0;
-            for (int k = 0; k < dimK; k++)
-            {
-                sum += fourDimRead(A, dimB, dimH, m, k, dimH, dimM, dimK) *
-                       fourDimRead(B, dimB, dimH, n, k, dimH, dimN, dimK);
-            }
-            fourDimWrite(C, dimB, dimH, m, n, dimH, dimM, dimN, sum);
-        }
-    }
-}
-
-void MatmulTiled4D(std::vector<float> &A, std::vector<float> &B, std::vector<float> &C, int dimB, int dimH,
-                 int dimM, int dimN, int dimK, int tileMStart, int tileMEnd, int tileNStart,
-                 int tileNEnd)
-{
-    for (int m = tileMStart; m < tileMEnd && m < dimM; m++)
-    {
-        for (int n = tileNStart; n<tileNEnd && m < dimN;n++){
-            float sum = 0.0;
-            for (int k = 0; k < dimK; k++)
-            {
-                sum += fourDimRead(A, dimB, dimH, m, k, dimH, dimM, dimK) *
-                       fourDimRead(B, dimB, dimH, k, n, dimH, dimK, dimN);
-            }
-            fourDimWrite(C, dimB, dimH, m, n, dimH, dimM, dimN, sum);
-        }
-    }
+    return true;
 }
 
 torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, torch::Tensor VTensor, torch::Tensor QK_tTensor,
@@ -187,14 +230,14 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
         for(int h = 0; h < H; h++)
         {
             // Compute QK^t and store in QK_t
-            MatmulTransposeTiled4D(Q, K, QK_t, B, H, N, d, N, 0, N, 0, N);
+            MatmulTranspose4Dto2D(Q, K, QK_t, {B, H, N, d}, {B, H, N, d}, b, h, 0, N, 0, N);
 
             // Apply Softmax to QK_t (you can implement this yourself or use a library function)
             // YOUR CODE HERE
-            SoftMaxTiled4D(QK_t, b, h, N, N, b, h, 0, N);
+            SoftMax2D(QK_t, {N, N}, 0, N);
 
             // Compute O = QK^tV and store in O
-            MatmulTiled4D(QK_t, V, O, B, H, N, N, d, 0, N, 0, d);
+            Matmul2Dto4D(QK_t, V, O, {N, N}, {B, H, N, d}, b, h, 0, N, 0, d);
         }
     }
     
