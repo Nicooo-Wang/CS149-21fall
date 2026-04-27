@@ -314,6 +314,42 @@ torch::Tensor myUnfusedAttentionBlocked(torch::Tensor QTensor, torch::Tensor KTe
     std::vector<float> QK_t = formatTensor(QK_tTensor);
 
     // -------- YOUR CODE HERE  -------- //
+    int TILE = 64;
+
+    for (int b = 0; b < B; b++)
+    {
+        for(int h = 0; h < H; h++)
+        {
+            // Compute QK^t and store in QK_t (tiled on m, n)
+            for (int tm = 0; tm < N; tm += TILE)
+            {
+                int mEnd = std::min(tm + TILE, N);
+                for (int tn = 0; tn < N; tn += TILE)
+                {
+                    int nEnd = std::min(tn + TILE, N);
+                    MatmulTranspose4Dto2D(Q, K, QK_t, {B, H, N, d}, {B, H, N, d}, b, h, tm, mEnd, tn, nEnd);
+                }
+            }
+
+            // Apply Softmax to QK_t (tiled on m)
+            for (int tm = 0; tm < N; tm += TILE)
+            {
+                int mEnd = std::min(tm + TILE, N);
+                SoftMax2D(QK_t, {N, N}, tm, mEnd);
+            }
+
+            // Compute O = QK^tV and store in O (tiled on m, n)
+            for (int tm = 0; tm < N; tm += TILE)
+            {
+                int mEnd = std::min(tm + TILE, N);
+                for (int tn = 0; tn < d; tn += TILE)
+                {
+                    int nEnd = std::min(tn + TILE, d);
+                    Matmul2Dto4D(QK_t, V, O, {N, N}, {B, H, N, d}, b, h, tm, mEnd, tn, nEnd);
+                }
+            }
+        }
+    }
 
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
