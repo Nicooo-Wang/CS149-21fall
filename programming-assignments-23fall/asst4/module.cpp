@@ -9,6 +9,7 @@
 // Uncomment for ISPC
 //#include "module_ispc.h"
 //using namespace ispc;
+int g_zero = 0;
 
 // ------------------------------------ //
 // 	WARM-UP: ACCESSING TENSORS      //
@@ -361,6 +362,87 @@ torch::Tensor myUnfusedAttentionBlocked(torch::Tensor QTensor, torch::Tensor KTe
 //                 PART 3: FUSED ATTENTION     	              //
 // ---------------------------------------------------------- //
 
+bool MatmulTranspose4DtoRow(std::vector<float> &Q, std::vector<float> &K_t, std::vector<float> &QK_t,
+                           std::vector<int> QDims, std::vector<int> K_tDims, int selectB, int selectH, int seletctM)
+{
+    if (QDims.size() != 4 || K_tDims.size() != 1 ) {
+        std::cerr << "Invalid dimensions for Q, K^t." << std::endl;
+        return false;
+    }
+    if (QDims[3] != K_tDims[0])
+    {
+        std::cerr << "Batch size, number of heads, and embedding dimensionality must match for Q and K^t." << std::endl;
+        std::cerr << "Q Dims: " << QDims[0] << " " << QDims[1] << " " << QDims[2] << " " << QDims[3] << std::endl;
+        std::cerr << "K^t Dims: " << K_tDims[0] << std::endl;
+        return false;
+    }
+     
+    int B = QDims[0];
+    int H = QDims[1];
+    int M = QDims[2];
+    int N = QDims[2];
+    int K = QDims[3];
+
+    for (int n = 0; n < N; n++) {
+        float acc = 0;
+        for (int k = 0; k < K; k++)
+        {
+            acc += fourDimRead(Q, selectB, selectH, seletctM, k, H, M, K) * fourDimRead(K_t, selectB, selectH, n, k, H, M, K);
+        }
+        QK_t[n] = acc;
+    }
+
+    return true;
+}
+
+bool MatmulRowTo4D(std::vector<float> &QK_t, std::vector<float> &V, std::vector<float> &O, std::vector<int> QK_tDims,
+                   std::vector<int> VDims, int selectB, int selectH, int selectM)
+{
+    if (QK_tDims.size() != 1 || VDims.size() != 4) {
+        std::cerr << "Invalid dimensions for QK^t or V." << std::endl;
+        return false;
+    }
+    if (QK_tDims[0] != VDims[2] ) {
+        std::cerr << "Sequence length of QK^t must match sequence length of V." << std::endl;
+        std::cerr << "QK^t Dims: " << QK_tDims[0] <<  std::endl;
+        std::cerr << "V Dims: " << VDims[0] << " " << VDims[1] << " " << VDims[2] << " " << VDims[3] << std::endl;
+        return false;
+    }
+
+    int B = VDims[0];
+    int H = VDims[1];
+    int K = VDims[2];
+    int N = VDims[3];
+    int M = QK_tDims[0];
+
+    for (int n = 0; n < N; n++) {
+        float acc = 0;
+        for (int k = 0; k < K; k++) {
+            int myZero  = 0;
+            acc += QK_t[k] * fourDimRead(V, selectB, selectH, k, n, H, K, N);
+        }
+        fourDimWrite(O, selectB, selectH, selectM, n, H, M, N, acc);
+    }
+
+    return true;
+}
+
+bool SoftMaxRow(std::vector<float> &mat, int len)
+{
+    float sumExp = 0.0;
+    for (int i = 0; i < len; i++)
+    {
+        mat[i] = exp(mat[i]);
+        sumExp += mat[i];
+    }
+    for (int i = 0; i < len; i++)
+    {
+        mat[i] = mat[i] / sumExp;
+    }
+
+    return true;
+}
+
 torch::Tensor myFusedAttention(torch::Tensor QTensor, torch::Tensor KTensor, torch::Tensor VTensor, torch::Tensor temp,
                 int B, int H, int N, int d){
 
@@ -385,6 +467,7 @@ torch::Tensor myFusedAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     // -------- YOUR CODE HERE  -------- //
     // We give you a template of the first three loops for your convenience
     //loop over batch
+    #pragma omp parallel for collapse(3)
     for (int b = 0; b < B; b++){
 
         //loop over heads
@@ -394,7 +477,10 @@ torch::Tensor myFusedAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
 		// YRow is moved inside so each OpenMP thread gets a local copy.
                 at::Tensor ORowTensor = temp.index({torch::indexing::Slice(omp_get_thread_num(), torch::indexing::None)});      
                 std::vector<float> ORow = formatTensor(ORowTensor);
-		//YOUR CODE HERE
+                // YOUR CODE HERE
+                MatmulTranspose4DtoRow(Q, K, ORow, {B, H, N, d}, {d}, b, h, i);
+                SoftMaxRow(ORow, N);
+                MatmulRowTo4D(ORow, V, O, {N}, {B, H, N, d}, b, h, i);
             }
 	}
     }
