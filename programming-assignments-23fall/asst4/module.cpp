@@ -496,6 +496,153 @@ torch::Tensor myFusedAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
 //                PART 4: FLASH ATTENTION 		      //
 // ---------------------------------------------------------- //
 
+bool LoadKjVj(std::vector<float> &K, std::vector<float> &V, std::vector<float> &Kj, std::vector<float> &Vj,
+              std::vector<int> KDims, int j, int Bc, int idxB, int idxH)
+{
+    int H = KDims[1];
+    int N = KDims[2];
+    int d = KDims[3];
+    for (int row = 0; row < Bc; row++) {
+        int seqIdx = j + row;
+        for (int col = 0; col < d; col++) {
+            Kj[row * d + col] = fourDimRead(K, idxB, idxH, seqIdx, col, H, N, d);
+            Vj[row * d + col] = fourDimRead(V, idxB, idxH, seqIdx, col, H, N, d);
+        }
+    }
+    return true;
+}
+
+bool LoadQiOiLi(std::vector<float> &Q, std::vector<float> &O, std::vector<float> &l, std::vector<float> &Qi,
+                std::vector<float> &Oi, std::vector<float> &li, std::vector<int> QDims, int i, int Br, int idxB,
+                int idxH)
+{
+    int H = QDims[1];
+    int N = QDims[2];
+    int d = QDims[3];
+    for (int row = 0; row < Br; row++) {
+        int seqIdx = i + row;
+        li[row] = l[seqIdx];
+        for (int col = 0; col < d; col++) {
+            Qi[row * d + col] = fourDimRead(Q, idxB, idxH, seqIdx, col, H, N, d);
+            Oi[row * d + col] = fourDimRead(O, idxB, idxH, seqIdx, col, H, N, d);
+        }
+    }
+    return true;
+}
+
+bool ComputeSij(std::vector<float> &Qi, std::vector<float> &Kj, std::vector<float> &Sij, std::vector<int> QiDims,
+                std::vector<int> KjDims, std::vector<int> SijDims, int idxB, int idxH)
+{
+    int Br = QiDims[0];
+    int d  = QiDims[1];
+    int Bc = KjDims[0];
+    for (int m = 0; m < Br; m++) {
+        for (int n = 0; n < Bc; n++) {
+            float acc = 0.0f;
+            for (int k = 0; k < d; k++) {
+                acc += Qi[m * d + k] * Kj[n * d + k];
+            }
+            Sij[m * Bc + n] = acc;
+        }
+    }
+    return true;
+}
+
+bool ComputePij(std::vector<float> &Sij, std::vector<float> &Pij, std::vector<int> SijDims, std::vector<int> PijDims,
+                int idxB, int idxH)
+{
+    int Br = SijDims[0];
+    int Bc = SijDims[1];
+    for (int m = 0; m < Br; m++) {
+        for (int n = 0; n < Bc; n++) {
+            Pij[m * Bc + n] = exp(Sij[m * Bc + n]);
+        }
+    }
+    return true;
+}
+
+bool ComputeLij(std::vector<float> &lij, std::vector<float> &Pij, std::vector<int> lijDims, std::vector<int> PijDims,
+                int idxB, int idxH)
+{
+    int Br = lijDims[0];
+    int Bc = PijDims[1];
+    for (int m = 0; m < Br; m++) {
+        float sum = 0.0f;
+        for (int n = 0; n < Bc; n++) {
+            sum += Pij[m * Bc + n];
+        }
+        lij[m] = sum;
+    }
+    return true;
+}
+
+bool ComputeLnew(std::vector<float> &lij, std::vector<float> &li, std::vector<float> &lnew, std::vector<int> lijDims,
+                 std::vector<int> liDims, std::vector<int> lnewDims, int idxB, int idxH)
+{
+    int Br = lijDims[0];
+    for (int m = 0; m < Br; m++) {
+        lnew[m] = li[m] + lij[m];
+    }
+    return true;
+}
+
+bool ComputeOi(std::vector<float> &Pij, std::vector<float> &Vj, std::vector<float> &li, std::vector<float> &Oi,
+               std::vector<float> &lnew, std::vector<int> PijDims, std::vector<int> VjDims, std::vector<int> liDims,
+               std::vector<int> OiDims, std::vector<int> lnewDims, int idxB, int idxH)
+{
+    int Br = PijDims[0];
+    int Bc = PijDims[1];
+    int d  = VjDims[1];
+    for (int m = 0; m < Br; m++) {
+        for (int n = 0; n < d; n++) {
+            // P_ij @ V_j contribution
+            float pv = 0.0f;
+            for (int k = 0; k < Bc; k++) {
+                pv += Pij[m * Bc + k] * Vj[k * d + n];
+            }
+            // O_i <- (l_i * O_i + P_ij @ V_j) / l_new
+            Oi[m * d + n] = (li[m] * Oi[m * d + n] + pv) / lnew[m];
+        }
+    }
+    return true;
+}
+
+bool WriteOiToO(std::vector<float> &Oi, std::vector<float> &O, std::vector<int> OiDims, std::vector<int> ODims, int i,
+           int idxB, int idxH)
+{
+    int Br = OiDims[0];
+    int d  = OiDims[1];
+    int H  = ODims[1];
+    int N  = ODims[2];
+    for (int row = 0; row < Br; row++) {
+        int seqIdx = i + row;
+        for (int col = 0; col < d; col++) {
+            float val = Oi[row * d + col];
+            fourDimWrite(O, idxB, idxH, seqIdx, col, H, N, d, val);
+        }
+    }
+    return true;
+}
+
+bool WriteLnewToL(std::vector<float> &lnew, std::vector<float> &l, std::vector<int> lnewDims, std::vector<int> lDims, int i,
+             int idxB, int idxH)
+{
+    int Br = lnewDims[0];
+    for (int row = 0; row < Br; row++) {
+        l[i + row] = lnew[row];
+    }
+    return true;
+}
+
+bool ResetL(std::vector<float> &l, std::vector<int> lDims)
+{
+    int N = lDims[0];
+    for (int i = 0; i < N; i++) {
+        l[i] = 0.0f;
+    }
+    return true;
+}
+
 torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, torch::Tensor VTensor,
                torch::Tensor QiTensor, torch::Tensor KjTensor, torch::Tensor VjTensor,
                torch::Tensor SijTensor, torch::Tensor PijTensor, torch::Tensor PVTensor,
@@ -531,6 +678,32 @@ torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     std::vector<float> lnew = formatTensor(LnewTensor);
 
     // -------- YOUR CODE HERE  -------- //
+    for (int idxB = 0; idxB < B; idxB++)
+    {
+        for (int idxH = 0; idxH < H; idxH++)
+        {
+            ResetL(l, {N});
+            for (int j = 0; j < N; j += Bc)
+            {
+                int jEnd = std::min(j + Bc, N);
+                int actualBc = jEnd - j;
+                LoadKjVj(K, V, Kj, Vj, {B, H, N, d}, j, actualBc, idxB, idxH);
+                for (int i = 0; i < N; i += Br)
+                {
+                    int iEnd = std::min(i + Br, N);
+                    int actualBr = iEnd - i;
+                    LoadQiOiLi(Q, O, l, Qi, Oi, li, {B, H, N, d}, i, actualBr, idxB, idxH);
+                    ComputeSij(Qi, Kj, Sij, {actualBr, d}, {actualBc, d}, {actualBr, actualBc}, idxB, idxH);
+                    ComputePij(Sij, Pij, {actualBr, actualBc}, {actualBr, actualBc}, idxB, idxH);
+                    ComputeLij(lij, Pij, {actualBr}, {actualBr, actualBc}, idxB, idxH);
+                    ComputeLnew(lij, li, lnew, {actualBr}, {actualBr}, {actualBr}, idxB, idxH);
+                    ComputeOi(Pij, Vj, li, Oi, lnew, {actualBr, actualBc}, {actualBc, d}, {actualBr}, {actualBr, d}, {actualBr}, idxB, idxH);
+                    WriteOiToO(Oi, O, {actualBr, d}, {B, H, N, d}, i, idxB, idxH);
+                    WriteLnewToL(lnew, l, {actualBr}, {N}, i, idxB, idxH);
+                }
+            }
+        }
+    }
 
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
